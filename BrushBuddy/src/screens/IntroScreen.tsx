@@ -4,7 +4,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   Dimensions,
 } from 'react-native';
 import speechService from '../services/speechService';
@@ -19,6 +18,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
   const [isListening, setIsListening] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<string>('Initializing...');
 
   const introStep = routineSteps[0]; // Get the intro step
 
@@ -34,18 +34,36 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
 
   const initializeServices = async () => {
     try {
-      await voiceService.initialize();
+      console.log('🎤 IntroScreen: Initializing voice services...');
+      setVoiceStatus('Initializing voice service...');
+
+      const initialized = await voiceService.initialize();
+      console.log('🎤 IntroScreen: Voice service initialized:', initialized);
+
+      // Ensure voice service is available
+      voiceService.ensureAvailable();
+
+      // Log the voice service status
+      voiceService.logStatus();
+
       const hasPermission = await voiceService.requestPermissions();
-      
+      console.log('🎤 IntroScreen: Permissions granted:', hasPermission);
+
       if (!hasPermission) {
-        Alert.alert(
-          'Microphone Permission',
-          'Voice commands are disabled. You can still use the buttons to navigate.',
-          [{ text: 'OK' }]
-        );
+        setVoiceStatus('Microphone permission denied - using simulated mode');
+        console.log('🎤 IntroScreen: No permissions, but continuing with simulated mode');
+      } else {
+        const status = voiceService.getStatus();
+        const mode = status.useRealVoice ? 'Real' : status.useWebSpeech ? 'Web Speech' : 'Simulated';
+        setVoiceStatus(`Voice mode: ${mode} (${status.platform})`);
       }
+
+      console.log('🎤 IntroScreen: Voice service setup complete');
     } catch (error) {
-      console.error('Failed to initialize services:', error);
+      console.error('❌ IntroScreen: Failed to initialize services:', error);
+      setVoiceStatus('Using simulated voice mode');
+      // Ensure voice service is still available in simulated mode
+      voiceService.ensureAvailable();
     }
   };
 
@@ -63,37 +81,54 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
   };
 
   const startListening = async () => {
+    console.log('🎤 IntroScreen: startListening called');
+    console.log('🎤 IntroScreen: Voice available:', voiceService.getIsAvailable());
+    console.log('🎤 IntroScreen: Is speaking:', isSpeaking);
+
     if (!voiceService.getIsAvailable() || isSpeaking) {
+      console.log('⚠️ IntroScreen: Cannot start listening - not available or speaking');
       return;
     }
 
     try {
+      console.log('🎤 IntroScreen: Starting voice listening...');
       await voiceService.startListening({
         onStart: () => {
+          console.log('🎤 IntroScreen: Voice listening started');
           setIsListening(true);
           setRecognizedText('');
+          setVoiceStatus('Listening for voice commands...');
         },
         onResult: handleVoiceResult,
         onError: (error) => {
-          console.error('Voice recognition error:', error);
+          console.error('❌ IntroScreen: Voice recognition error:', error);
           setIsListening(false);
+          setVoiceStatus(`Error: ${error}`);
         },
         onEnd: () => {
+          console.log('🎤 IntroScreen: Voice listening ended');
           setIsListening(false);
+          setVoiceStatus('Voice listening stopped');
         },
       });
     } catch (error) {
-      console.error('Failed to start listening:', error);
+      console.error('❌ IntroScreen: Failed to start listening:', error);
+      setVoiceStatus(`Failed to start: ${error}`);
     }
   };
 
   const handleVoiceResult = (result: VoiceRecognitionResult) => {
+    console.log('Intro screen voice result:', result);
     setRecognizedText(result.originalText);
 
     if (result.command === 'start_brushing') {
+      console.log('Handling start brushing command');
       handleStartBrushing();
     } else if (result.command === 'unknown') {
+      console.log('Unknown command in intro, speaking retry message');
       speakRetryMessage();
+    } else {
+      console.log('Command not handled in intro:', result.command);
     }
   };
 
@@ -117,9 +152,33 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
     onStartBrushing();
   };
 
-  // Simulate voice input for testing (remove in production)
+  // Simulate voice input for testing
   const simulateVoiceCommand = (command: string) => {
-    voiceService.simulateVoiceInput(command);
+    console.log('🎤 IntroScreen: Simulating voice command:', command);
+    console.log('🎤 IntroScreen: handleVoiceResult function available:', !!handleVoiceResult);
+
+    // Ensure voice service is available
+    voiceService.ensureAvailable();
+
+    // Use force simulation to bypass listening checks
+    voiceService.forceSimulateVoiceInput(command, {
+      onResult: (result) => {
+        console.log('🎤 IntroScreen: Simulation onResult called with:', result);
+        handleVoiceResult(result);
+      },
+      onStart: () => {
+        console.log('🎤 IntroScreen: Force simulation started');
+        setIsListening(true);
+      },
+      onEnd: () => {
+        console.log('🎤 IntroScreen: Force simulation ended');
+        setIsListening(false);
+      },
+      onError: (error) => {
+        console.error('🎤 IntroScreen: Force simulation error:', error);
+        setIsListening(false);
+      }
+    });
   };
 
   return (
@@ -133,6 +192,7 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
 
         {/* Voice Status */}
         <View style={styles.voiceStatusContainer}>
+          <Text style={styles.voiceStatusText}>{voiceStatus}</Text>
           {isListening && (
             <Text style={styles.listeningText}>🎤 Listening...</Text>
           )}
@@ -163,17 +223,16 @@ const IntroScreen: React.FC<IntroScreenProps> = ({ onStartBrushing }) => {
         {/* Prompt */}
         <Text style={styles.promptText}>{introStep.prompt}</Text>
 
-        {/* Debug buttons for testing (remove in production) */}
-        {__DEV__ && (
-          <View style={styles.debugContainer}>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={() => simulateVoiceCommand('start brushing')}
-            >
-              <Text style={styles.debugButtonText}>Test: "Start Brushing"</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {/* Debug buttons for testing */}
+        <View style={styles.debugContainer}>
+          <Text style={styles.debugTitle}>Voice Command Test:</Text>
+          <TouchableOpacity
+            style={styles.debugButton}
+            onPress={() => simulateVoiceCommand('start brushing')}
+          >
+            <Text style={styles.debugButtonText}>Say "Start Brushing"</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -211,10 +270,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   voiceStatusContainer: {
-    minHeight: 60,
+    minHeight: 80,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 10,
+    padding: 10,
+  },
+  voiceStatusText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 5,
   },
   listeningText: {
     fontSize: 16,
@@ -272,19 +340,31 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   debugContainer: {
-    position: 'absolute',
-    bottom: 50,
+    backgroundColor: '#FFF3E0',
+    padding: 15,
+    borderRadius: 10,
+    marginTop: 20,
     alignItems: 'center',
+    width: width - 40,
+  },
+  debugTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#E65100',
+    marginBottom: 10,
   },
   debugButton: {
     backgroundColor: '#FF5722',
-    padding: 10,
-    borderRadius: 5,
+    padding: 12,
+    borderRadius: 8,
     marginVertical: 5,
+    minWidth: 150,
+    alignItems: 'center',
   },
   debugButtonText: {
     color: 'white',
     fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 

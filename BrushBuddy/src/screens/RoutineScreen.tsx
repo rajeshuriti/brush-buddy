@@ -23,9 +23,42 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [timerActive, setTimerActive] = useState(false);
   const [timerResetTrigger, setTimerResetTrigger] = useState(0);
+  const [voiceStatus, setVoiceStatus] = useState<string>('Voice service ready');
 
   const currentStep = getStepById(currentStepId);
   const isLastStep = currentStepId === routineSteps.length - 1;
+
+  useEffect(() => {
+    // Initialize voice service when component mounts
+    const initializeVoiceService = async () => {
+      console.log('🎤 RoutineScreen: Initializing voice service...');
+      try {
+        await voiceService.initialize();
+        // Ensure voice service is available for simulated mode
+        voiceService.ensureAvailable();
+        voiceService.logStatus();
+        console.log('🎤 RoutineScreen: Voice service initialized and ensured available');
+
+        // Start listening immediately after initialization
+        console.log('🎤 RoutineScreen: Starting voice listening after initialization');
+        setTimeout(() => {
+          startListening();
+        }, 1000);
+      } catch (error) {
+        console.error('🎤 RoutineScreen: Failed to initialize voice service:', error);
+        // Force availability for simulated mode
+        voiceService.ensureAvailable();
+        console.log('🎤 RoutineScreen: Forced voice service availability for simulated mode');
+
+        // Still try to start listening even after error
+        setTimeout(() => {
+          startListening();
+        }, 1000);
+      }
+    };
+
+    initializeVoiceService();
+  }, []);
 
   useEffect(() => {
     if (currentStep) {
@@ -37,12 +70,14 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
     if (!currentStep) return;
 
     try {
+      console.log('🎤 RoutineScreen: Starting to speak current step:', currentStep.title);
       setIsSpeaking(true);
       setTimerActive(false);
       voiceService.stopListening();
 
       await speechService.speakForKids(currentStep.dialogue);
-      
+
+      console.log('🎤 RoutineScreen: Finished speaking, resetting speaking state');
       setIsSpeaking(false);
 
       // Start timer if this step requires it
@@ -53,10 +88,12 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
 
       // Start listening for voice commands
       if (!currentStep.isConclusion) {
+        console.log('🎤 RoutineScreen: Starting voice listening after speech');
         setTimeout(startListening, 500);
       }
     } catch (error) {
-      console.error('Error speaking step:', error);
+      console.error('❌ RoutineScreen: Error speaking step:', error);
+      console.log('🎤 RoutineScreen: Resetting speaking state due to error');
       setIsSpeaking(false);
       if (currentStep.hasTimer && !currentStep.isConclusion) {
         setTimerActive(true);
@@ -67,49 +104,83 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
   }, [currentStep]);
 
   const startListening = useCallback(async () => {
-    if (!voiceService.getIsAvailable() || isSpeaking || currentStep?.isConclusion) {
+    console.log('🎤 RoutineScreen: startListening called');
+    console.log('🎤 RoutineScreen: Voice available:', voiceService.getIsAvailable());
+    console.log('🎤 RoutineScreen: Is speaking:', isSpeaking);
+    console.log('🎤 RoutineScreen: Is conclusion:', currentStep?.isConclusion);
+
+    // Always ensure voice service is available
+    voiceService.ensureAvailable();
+    voiceService.logStatus();
+
+    // Don't start listening if on conclusion step
+    if (currentStep?.isConclusion) {
+      console.log('⚠️ RoutineScreen: Cannot start listening - conclusion step');
       return;
     }
 
+    // Log speaking state but don't block (for debug purposes)
+    if (isSpeaking) {
+      console.log('⚠️ RoutineScreen: Currently speaking, but allowing voice commands for debug');
+    }
+
     try {
+      console.log('🎤 RoutineScreen: Starting voice listening...');
       await voiceService.startListening({
         onStart: () => {
+          console.log('🎤 RoutineScreen: Voice listening started');
           setIsListening(true);
           setRecognizedText('');
+          setVoiceStatus('Listening for voice commands...');
         },
         onResult: handleVoiceResult,
         onError: (error) => {
-          console.error('Voice recognition error:', error);
+          console.error('❌ RoutineScreen: Voice recognition error:', error);
           setIsListening(false);
-          // Restart listening after a short delay
-          setTimeout(startListening, 2000);
+          setVoiceStatus(`Error: ${error}`);
+          // Don't automatically restart on error - let manual commands handle it
+          console.log('🎤 RoutineScreen: Voice error occurred, not auto-restarting');
         },
         onEnd: () => {
+          console.log('🎤 RoutineScreen: Voice listening ended');
           setIsListening(false);
-          // Restart listening if not on conclusion step
-          if (!currentStep?.isConclusion) {
-            setTimeout(startListening, 1000);
-          }
+          setVoiceStatus('Ready for voice commands');
+          // In simulated mode, we should stay listening - don't actually end
+          console.log('🎤 RoutineScreen: Voice command processed, staying ready for next command');
         },
       });
     } catch (error) {
-      console.error('Failed to start listening:', error);
+      console.error('❌ RoutineScreen: Failed to start listening:', error);
+      setVoiceStatus(`Failed to start: ${error}`);
+      // Don't automatically retry - let manual commands handle it
+      console.log('🎤 RoutineScreen: Failed to start listening, not auto-retrying');
     }
   }, [isSpeaking, currentStep]);
 
   const handleVoiceResult = useCallback((result: VoiceRecognitionResult) => {
+    console.log('🎤 RoutineScreen: handleVoiceResult called with:', result);
+    console.log('🎤 RoutineScreen: Current step:', currentStep?.title);
+    console.log('🎤 RoutineScreen: Current step ID:', currentStepId);
+
     setRecognizedText(result.originalText);
 
     const validCommands = ['next', 'done', 'ready', 'finish', 'ok'];
-    
+
+    console.log(`🎤 RoutineScreen: Command: ${result.command}, Is conclusion: ${currentStep?.isConclusion}, Valid commands: ${validCommands.includes(result.command)}`);
+
     if (currentStep?.isConclusion && result.command === 'start_over') {
+      console.log('🎤 RoutineScreen: Handling start over command');
       handleStartOver();
     } else if (validCommands.includes(result.command)) {
+      console.log('🎤 RoutineScreen: Handling next step command - calling handleNextStep()');
       handleNextStep();
     } else if (result.command === 'unknown') {
+      console.log('🎤 RoutineScreen: Unknown command, speaking retry message');
       speakRetryMessage();
+    } else {
+      console.log('🎤 RoutineScreen: Command not handled:', result.command);
     }
-  }, [currentStep]);
+  }, [currentStep, currentStepId]);
 
   const speakRetryMessage = useCallback(async () => {
     try {
@@ -137,18 +208,28 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
   }, [currentStep, startListening]);
 
   const handleNextStep = useCallback(() => {
+    console.log('🎤 RoutineScreen: handleNextStep called');
+    console.log('🎤 RoutineScreen: Current step ID:', currentStepId);
+    console.log('🎤 RoutineScreen: Is last step:', isLastStep);
+
     setTimerActive(false);
     voiceService.stopListening();
     speechService.stop();
     setRecognizedText('');
 
     if (isLastStep) {
+      console.log('🎤 RoutineScreen: On last step, not advancing');
       // Stay on the last step (conclusion)
       return;
     }
 
-    setCurrentStepId(prev => prev + 1);
-  }, [isLastStep]);
+    console.log('🎤 RoutineScreen: Advancing to next step:', currentStepId + 1);
+    setCurrentStepId(prev => {
+      const newStepId = prev + 1;
+      console.log('🎤 RoutineScreen: Step ID updated to:', newStepId);
+      return newStepId;
+    });
+  }, [isLastStep, currentStepId]);
 
   const handleStartOver = useCallback(() => {
     setTimerActive(false);
@@ -159,7 +240,52 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
 
   // Simulate voice input for testing
   const simulateVoiceCommand = (command: string) => {
-    voiceService.simulateVoiceInput(command);
+    console.log('🎤 RoutineScreen: Simulating voice command:', command);
+    console.log('🎤 RoutineScreen: Current step:', currentStep?.title);
+    console.log('🎤 RoutineScreen: handleVoiceResult function available:', !!handleVoiceResult);
+    console.log('🎤 RoutineScreen: Voice service listening state before:', voiceService.getIsListening());
+    console.log('🎤 RoutineScreen: Is speaking before command:', isSpeaking);
+
+    // Force reset speaking state for voice command testing
+    if (isSpeaking) {
+      console.log('🎤 RoutineScreen: Forcing speaking state reset for voice command');
+      speechService.stop(); // Stop any ongoing speech
+      setIsSpeaking(false);
+    }
+
+    // Ensure voice service is available and reset if stuck
+    voiceService.ensureAvailable();
+
+    // Check if voice service is stuck and reset if needed
+    if (voiceService.isStuckInListeningState()) {
+      console.log('🎤 RoutineScreen: Voice service appears stuck, forcing reset...');
+      voiceService.forceResetListeningState();
+    }
+
+    // Use force simulation to bypass listening checks
+    voiceService.forceSimulateVoiceInput(command, {
+      onResult: (result) => {
+        console.log('🎤 RoutineScreen: Simulation onResult called with:', result);
+        handleVoiceResult(result);
+      },
+      onStart: () => {
+        console.log('🎤 RoutineScreen: Force simulation started');
+        setIsListening(true);
+        setVoiceStatus('Processing voice command...');
+      },
+      onEnd: () => {
+        console.log('🎤 RoutineScreen: Force simulation ended');
+        // Keep listening state active for continuous voice commands
+        setIsListening(true);
+        setVoiceStatus('Listening for voice commands...');
+        console.log('🎤 RoutineScreen: Voice command processed, staying ready for next command');
+      },
+      onError: (error) => {
+        console.error('🎤 RoutineScreen: Force simulation error:', error);
+        setIsListening(false);
+        setVoiceStatus('Voice command error');
+      }
+    });
   };
 
   if (!currentStep) {
@@ -200,6 +326,7 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
 
         {/* Voice Status */}
         <View style={styles.voiceStatusContainer}>
+          <Text style={styles.voiceStatusText}>{voiceStatus}</Text>
           {isSpeaking && (
             <Text style={styles.speakingText}>🗣️ Speaking...</Text>
           )}
@@ -234,31 +361,100 @@ const RoutineScreen: React.FC<RoutineScreenProps> = ({ onStartOver }) => {
           </TouchableOpacity>
         )}
 
-        {/* Debug buttons for testing */}
-        {__DEV__ && !currentStep.isConclusion && (
+        {/* Debug buttons for testing - Always visible for now */}
+        {!currentStep.isConclusion && (
           <View style={styles.debugContainer}>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={() => simulateVoiceCommand('next')}
-            >
-              <Text style={styles.debugButtonText}>Test: "Next"</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={() => simulateVoiceCommand('done')}
-            >
-              <Text style={styles.debugButtonText}>Test: "Done"</Text>
-            </TouchableOpacity>
+            <Text style={styles.debugTitle}>Voice Command Test:</Text>
+            <View style={styles.debugButtonRow}>
+              <TouchableOpacity
+                style={styles.debugButton}
+                onPress={() => {
+                  console.log('🎤 Debug: Testing "next" command');
+                  simulateVoiceCommand('next');
+                }}
+              >
+                <Text style={styles.debugButtonText}>Say "Next"</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.debugButton}
+                onPress={() => {
+                  console.log('🎤 Debug: Testing "done" command');
+                  simulateVoiceCommand('done');
+                }}
+              >
+                <Text style={styles.debugButtonText}>Say "Done"</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.debugButton}
+                onPress={() => {
+                  console.log('🎤 Debug: Testing "ready" command');
+                  simulateVoiceCommand('ready');
+                }}
+              >
+                <Text style={styles.debugButtonText}>Say "Ready"</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.debugButtonRow}>
+              <TouchableOpacity
+                style={[styles.debugButton, styles.directTestButton]}
+                onPress={() => {
+                  console.log('🎤 Direct test: Calling handleNextStep directly');
+                  handleNextStep();
+                }}
+              >
+                <Text style={styles.debugButtonText}>Direct Next Step</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.debugButton, styles.statusButton]}
+                onPress={() => {
+                  console.log('🎤 Status check: Voice service status');
+                  voiceService.logStatus();
+                  console.log('🎤 Status check: Current step:', currentStep?.title);
+                  console.log('🎤 Status check: Step ID:', currentStepId);
+                  console.log('🎤 Status check: Is listening:', isListening);
+                  console.log('🎤 Status check: Is speaking:', isSpeaking);
+                  console.log('🎤 Status check: Is stuck:', voiceService.isStuckInListeningState());
+                }}
+              >
+                <Text style={styles.debugButtonText}>Check Status</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.debugButtonRow}>
+              <TouchableOpacity
+                style={[styles.debugButton, styles.resetButton]}
+                onPress={() => {
+                  console.log('🎤 Reset: Forcing voice service reset');
+                  voiceService.forceResetListeningState();
+                  setIsListening(false);
+                  setVoiceStatus('Voice service reset');
+                  console.log('🎤 Reset: Voice service has been reset');
+                }}
+              >
+                <Text style={styles.debugButtonText}>Reset Voice</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.debugButton, styles.startListeningButton]}
+                onPress={() => {
+                  console.log('🎤 Manual: Starting voice listening');
+                  startListening();
+                }}
+              >
+                <Text style={styles.debugButtonText}>Start Listening</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
-        {__DEV__ && currentStep.isConclusion && (
-          <TouchableOpacity
-            style={styles.debugButton}
-            onPress={() => simulateVoiceCommand('start over')}
-          >
-            <Text style={styles.debugButtonText}>Test: "Start Over"</Text>
-          </TouchableOpacity>
+        {currentStep.isConclusion && (
+          <View style={styles.debugContainer}>
+            <Text style={styles.debugTitle}>Voice Command Test:</Text>
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={() => simulateVoiceCommand('start over')}
+            >
+              <Text style={styles.debugButtonText}>Say "Start Over"</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </View>
@@ -313,10 +509,19 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   voiceStatusContainer: {
-    minHeight: 50,
+    minHeight: 70,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 15,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 10,
+    padding: 10,
+  },
+  voiceStatusText: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 5,
   },
   speakingText: {
     fontSize: 16,
@@ -391,19 +596,53 @@ const styles = StyleSheet.create({
     marginTop: 50,
   },
   debugContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
+    backgroundColor: '#FFF3E0',
+    padding: 15,
+    borderRadius: 10,
     marginTop: 10,
+    alignItems: 'center',
+  },
+  debugTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#E65100',
+    marginBottom: 10,
+  },
+  debugButtonRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 10,
   },
   debugButton: {
     backgroundColor: '#FF5722',
-    padding: 8,
-    borderRadius: 5,
+    padding: 10,
+    borderRadius: 8,
     marginHorizontal: 5,
+    marginVertical: 3,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  directTestButton: {
+    backgroundColor: '#4CAF50',
+    minWidth: 120,
+  },
+  statusButton: {
+    backgroundColor: '#2196F3',
+    minWidth: 120,
+  },
+  resetButton: {
+    backgroundColor: '#FF5722',
+    minWidth: 120,
+  },
+  startListeningButton: {
+    backgroundColor: '#4CAF50',
+    minWidth: 120,
   },
   debugButtonText: {
     color: 'white',
     fontSize: 12,
+    fontWeight: 'bold',
   },
 });
 

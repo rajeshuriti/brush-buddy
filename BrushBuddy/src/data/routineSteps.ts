@@ -69,7 +69,7 @@ export const routineSteps: RoutineStep[] = [
   {
     id: 8,
     title: "Gargle Roar!",
-    dialogue: "Time for the mighty gargle roar! Take a sip of water, tilt your head back, and make some fun 'GAAARRRGGGLE' sounds! Try to make a loud one! Ready? ... Wow! That was a powerful gargle! Now spit!",
+    dialogue: "Time for the mighty gargle roar! Take a sip of water, tilt your head back! Try to make a loud one! Ready? ... Wow! That was a powerful gargle! Now spit!",
     prompt: "Say 'Next!' or tap the button after your gargle roar!",
     hasTimer: true,
   },
